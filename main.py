@@ -144,20 +144,24 @@ async def get_trade_prices(pref_code: str, city_code: str) -> list:
 
 
 async def get_land_prices(lat: float, lon: float) -> list:
-    """地価公示・地価調査取得 - XPT002（タイル座標方式）"""
+    """地価公示・地価調査取得 - XPT002（タイル座標方式）
+    z=15 で取得し、結果が空なら z=14 → z=13 と段階的に広域検索。"""
     if not MLIT_API_KEY:
         return []
-    x, y = latlon_to_tile(lat, lon, REINFOLIB_ZOOM)
     year = datetime.now().year - 1  # 直近公示年（前年）
-    params = {"response_format": "geojson", "z": REINFOLIB_ZOOM, "x": x, "y": y, "year": year}
     headers = {"Ocp-Apim-Subscription-Key": MLIT_API_KEY}
     async with httpx.AsyncClient(timeout=15.0) as client:
-        try:
-            resp = await client.get(f"{REINFOLIB_BASE}/XPT002/", params=params, headers=headers)
-            if resp.status_code == 200:
-                return resp.json().get("features", [])
-        except Exception:
-            pass
+        for z in (15, 14, 13):
+            x, y = latlon_to_tile(lat, lon, z)
+            params = {"response_format": "geojson", "z": z, "x": x, "y": y, "year": year}
+            try:
+                resp = await client.get(f"{REINFOLIB_BASE}/XPT002/", params=params, headers=headers)
+                if resp.status_code == 200:
+                    features = resp.json().get("features", [])
+                    if features:
+                        return features
+            except Exception:
+                pass
     return []
 
 
