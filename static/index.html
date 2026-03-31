@@ -360,9 +360,19 @@
 <script>
   let leafletMap = null;
   let mapMarker = null;
+  let zoningLayer = null;
+
+  // 用途地域の種類に応じた色
+  function zoningColor(name) {
+    if (!name) return '#a0aec0';
+    if (/商業/.test(name))  return '#fc8181';
+    if (/工業/.test(name))  return '#a0aec0';
+    if (/農業|田園/.test(name)) return '#68d391';
+    return '#63b3ed'; // 住居系
+  }
 
   // ── Map ──────────────────────────────────────────────────────────────────
-  function showMap(lat, lon, label) {
+  function showMap(lat, lon, label, zoningFeatures) {
     const wrap = document.getElementById('map-wrap');
     wrap.style.display = 'block';
     if (!leafletMap) {
@@ -374,6 +384,31 @@
     } else {
       leafletMap.setView([lat, lon], 15);
     }
+
+    // 用途地域ポリゴン描画
+    if (zoningLayer) zoningLayer.remove();
+    if (zoningFeatures && zoningFeatures.length > 0) {
+      zoningLayer = L.geoJSON({ type: 'FeatureCollection', features: zoningFeatures }, {
+        style: (feature) => {
+          const name = feature.properties?.use_area_ja || feature.properties?.youto || '';
+          return {
+            color: zoningColor(name),
+            weight: 2,
+            opacity: 0.8,
+            fillColor: zoningColor(name),
+            fillOpacity: 0.25,
+          };
+        },
+        onEachFeature: (feature, layer) => {
+          const p = feature.properties || {};
+          const name = p.use_area_ja || p.youto || '不明';
+          const coverage = p.u_building_coverage_ratio_ja || p.kenpeiritsu || '-';
+          const floor = p.u_floor_area_ratio_ja || p.yosekiritsu || '-';
+          layer.bindPopup(`<b>${escHtml(name)}</b><br>建蔽率: ${escHtml(coverage)}<br>容積率: ${escHtml(floor)}`);
+        },
+      }).addTo(leafletMap);
+    }
+
     if (mapMarker) mapMarker.remove();
     mapMarker = L.marker([lat, lon])
       .addTo(leafletMap)
@@ -585,7 +620,7 @@
       }
       const data = await resp.json();
       renderResults(data);
-      showMap(data.lat, data.lon, data.address);
+      showMap(data.lat, data.lon, data.address, data.zoning_features || []);
     } catch (err) {
       main.innerHTML = `<div class="error-banner">❌ ${escHtml(err.message)}</div>`;
     } finally {

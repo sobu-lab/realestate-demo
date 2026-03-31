@@ -339,6 +339,9 @@ async def search(address: str):
     if city_info.get("pref_code") and city_info.get("muniCd"):
         trades_raw = await get_trade_prices(city_info["pref_code"], city_info["muniCd"])
 
+    # 用途地域GeoJSONフィーチャー（地図描画用）
+    zoning_features = zoning_raw.get("features", []) if isinstance(zoning_raw, dict) else []
+
     return {
         "address": address,
         "lat": lat,
@@ -346,6 +349,7 @@ async def search(address: str):
         "city_info": city_info,
         "has_api_key": bool(MLIT_API_KEY),
         "zoning": parse_zoning(zoning_raw),
+        "zoning_features": zoning_features,
         "hazard": parse_hazard(flood_raw, tsunami_raw, landslide_raw),
         "prices": parse_prices(trades_raw, land_price_raw if isinstance(land_price_raw, list) else [], city_info.get("muniCd", ""), lat, lon),
     }
