@@ -247,7 +247,7 @@ def parse_hazard(flood: dict | None, tsunami: dict | None, landslide: dict | Non
     }
 
 
-def parse_prices(trades: list, land_price_features: list) -> dict:
+def parse_prices(trades: list, land_price_features: list, city_code: str = "") -> dict:
     """取引価格・地価公示データの解析"""
     samples = []
     for t in trades[:8]:
@@ -263,9 +263,17 @@ def parse_prices(trades: list, land_price_features: list) -> dict:
             "district": t.get("DistrictName", ""),
         })
 
-    # 地価公示サマリー（近傍ポイントの平均変動率と代表価格）
+    # 地価公示：対象市区町村のみに絞り込み（3x3グリッドの隣接市町村除外）
+    filtered = [
+        f for f in land_price_features
+        if not city_code or f.get("properties", {}).get("city_code", "") == city_code
+    ]
+    # 同一市区町村のデータがない場合は全件表示（離島・合併前データ等の救済）
+    if not filtered:
+        filtered = land_price_features
+
     land_prices = []
-    for f in land_price_features:
+    for f in filtered:
         p = f.get("properties", {})
         land_prices.append({
             "price": p.get("u_current_years_price_ja", ""),
@@ -320,7 +328,7 @@ async def search(address: str):
         "has_api_key": bool(MLIT_API_KEY),
         "zoning": parse_zoning(zoning_raw),
         "hazard": parse_hazard(flood_raw, tsunami_raw, landslide_raw),
-        "prices": parse_prices(trades_raw, land_price_raw if isinstance(land_price_raw, list) else []),
+        "prices": parse_prices(trades_raw, land_price_raw if isinstance(land_price_raw, list) else [], city_info.get("muniCd", "")),
     }
 
 
