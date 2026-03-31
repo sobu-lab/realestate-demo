@@ -247,7 +247,17 @@ def parse_hazard(flood: dict | None, tsunami: dict | None, landslide: dict | Non
     }
 
 
-def parse_prices(trades: list, land_price_features: list, city_code: str = "") -> dict:
+def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """2点間の距離（km）をハバーサイン公式で計算"""
+    R = 6371.0
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = math.sin(dlat / 2) ** 2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2
+    return R * 2 * math.asin(math.sqrt(a))
+
+
+def parse_prices(trades: list, land_price_features: list, city_code: str = "",
+                 lat: float = 0.0, lon: float = 0.0) -> dict:
     """取引価格・地価公示データの解析"""
     samples = []
     for t in trades[:8]:
@@ -271,6 +281,15 @@ def parse_prices(trades: list, land_price_features: list, city_code: str = "") -
     # 同一市区町村のデータがない場合は全件表示（離島・合併前データ等の救済）
     if not filtered:
         filtered = land_price_features
+
+    # 検索地点からの距離でソートし近い順に最大10件
+    if lat and lon:
+        def _dist(f: dict) -> float:
+            coords = f.get("geometry", {}).get("coordinates") or []
+            if coords and len(coords) >= 2:
+                return _haversine_km(lat, lon, float(coords[1]), float(coords[0]))
+            return 9999.0
+        filtered = sorted(filtered, key=_dist)[:10]
 
     land_prices = []
     for f in filtered:
@@ -328,7 +347,7 @@ async def search(address: str):
         "has_api_key": bool(MLIT_API_KEY),
         "zoning": parse_zoning(zoning_raw),
         "hazard": parse_hazard(flood_raw, tsunami_raw, landslide_raw),
-        "prices": parse_prices(trades_raw, land_price_raw if isinstance(land_price_raw, list) else [], city_info.get("muniCd", "")),
+        "prices": parse_prices(trades_raw, land_price_raw if isinstance(land_price_raw, list) else [], city_info.get("muniCd", ""), lat, lon),
     }
 
 
