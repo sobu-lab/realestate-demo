@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>不動産調査ツール β版</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans JP', 'Hiragino Sans', sans-serif;
+      background: #f0f4f8;
+      color: #2d3748;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ===== Header ===== */
+    header {
+      background: linear-gradient(135deg, #1a5f7a 0%, #0d3b4f 100%);
+      color: white;
+      padding: 1rem 2rem;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+    }
+    header .logo { font-size: 1.8rem; line-height: 1; }
+    header h1 { font-size: 1.35rem; font-weight: 700; letter-spacing: 0.02em; }
+    header .badge {
+      background: #57c5b6;
+      color: white;
+      padding: 0.15rem 0.55rem;
+      border-radius: 20px;
+      font-size: 0.68rem;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+    }
+
+    /* ===== Search ===== */
+    .search-wrap {
+      background: white;
+      padding: 1.25rem 2rem;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.07);
+    }
+    .search-form {
+      display: flex;
+      gap: 0.6rem;
+      max-width: 720px;
+      margin: 0 auto;
+    }
+    .search-input {
+      flex: 1;
+      padding: 0.7rem 1rem;
+      border: 2px solid #e2e8f0;
+      border-radius: 8px;
+      font-size: 0.98rem;
+      transition: border-color 0.2s;
+      background: #fafafa;
+    }
+    .search-input:focus {
+      outline: none;
+      border-color: #57c5b6;
+      background: white;
+    }
+    .search-btn {
+      padding: 0.7rem 1.4rem;
+      background: #1a5f7a;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 0.98rem;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 0.2s, transform 0.1s;
+    }
+    .search-btn:hover:not(:disabled) { background: #145068; transform: translateY(-1px); }
+    .search-btn:active:not(:disabled) { transform: translateY(0); }
+    .search-btn:disabled { background: #a0aec0; cursor: not-allowed; }
+
+    /* ===== Map ===== */
+    #map-wrap { display: none; height: 240px; }
+    #map { height: 100%; }
+
+    /* ===== Main ===== */
+    main {
+      flex: 1;
+      max-width: 1160px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 1.5rem 1rem 2rem;
+    }
+
+    /* ===== Loading / Error ===== */
+    .loading {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1rem;
+      padding: 3rem 0;
+    }
+    .spinner {
+      width: 44px; height: 44px;
+      border: 4px solid #e2e8f0;
+      border-top-color: #1a5f7a;
+      border-radius: 50%;
+      animation: spin 0.75s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .loading p { color: #718096; font-size: 0.9rem; }
+
+    .error-banner {
+      background: #fff5f5;
+      border: 1px solid #feb2b2;
+      border-radius: 10px;
+      padding: 1rem 1.25rem;
+      color: #c53030;
+      text-align: center;
+      font-size: 0.92rem;
+    }
+
+    /* ===== Location bar ===== */
+    .location-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-bottom: 1rem;
+      font-size: 0.87rem;
+      color: #718096;
+    }
+    .location-bar .coords { font-size: 0.8rem; }
+    .location-bar a {
+      color: #1a5f7a;
+      text-decoration: none;
+      font-weight: 600;
+    }
+    .location-bar a:hover { text-decoration: underline; }
+
+    /* ===== No-key notice ===== */
+    .no-key-notice {
+      background: #fffbeb;
+      border: 1px solid #f6e05e;
+      border-radius: 8px;
+      padding: 0.75rem 1rem;
+      font-size: 0.84rem;
+      color: #975a16;
+      margin-bottom: 1rem;
+      line-height: 1.6;
+    }
+    .no-key-notice a { color: #975a16; font-weight: 700; }
+
+    /* ===== Cards grid ===== */
+    .cards-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 1.25rem;
+    }
+
+    /* ===== Card base ===== */
+    .card {
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 2px 14px rgba(0,0,0,0.08);
+      overflow: hidden;
+    }
+    .card-head {
+      display: flex;
+      align-items: center;
+      gap: 0.55rem;
+      padding: 0.9rem 1.2rem;
+      border-bottom: 1px solid rgba(0,0,0,0.06);
+    }
+    .card-head .icon { font-size: 1.3rem; }
+    .card-head h2 { font-size: 0.97rem; font-weight: 700; }
+    .card-body { padding: 1.2rem; }
+
+    .card-head.zoning  { background: #ebf8ff; color: #2b6cb0; }
+    .card-head.hazard  { background: #fff5f5; color: #c53030; }
+    .card-head.prices  { background: #f0fff4; color: #276749; }
+
+    /* ===== Zoning card ===== */
+    .zone-item {
+      background: #ebf8ff;
+      border-radius: 8px;
+      padding: 0.75rem 1rem;
+    }
+    .zone-item + .zone-item { margin-top: 0.6rem; }
+    .zone-name { font-weight: 700; font-size: 1rem; color: #2b6cb0; margin-bottom: 0.45rem; }
+    .zone-meta {
+      display: flex;
+      gap: 1.25rem;
+      flex-wrap: wrap;
+      font-size: 0.82rem;
+    }
+    .zone-meta .meta-item label {
+      display: block;
+      font-size: 0.74rem;
+      color: #718096;
+      margin-bottom: 0.1rem;
+    }
+    .zone-meta .meta-item span { font-weight: 600; color: #2d3748; }
+
+    /* ===== Hazard card ===== */
+    .hazard-list { display: flex; flex-direction: column; gap: 0.6rem; }
+    .hazard-row {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      padding: 0.65rem 0.85rem;
+      border-radius: 8px;
+    }
+    .hazard-row.low      { background: #f0fff4; }
+    .hazard-row.high     { background: #fff5f5; }
+    .hazard-row.unknown  { background: #f7fafc; }
+    .hazard-icon  { font-size: 1.15rem; }
+    .hazard-name  { font-weight: 600; font-size: 0.88rem; width: 88px; flex-shrink: 0; }
+    .hazard-badge {
+      padding: 0.18rem 0.55rem;
+      border-radius: 20px;
+      font-size: 0.76rem;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .badge-low     { background: #c6f6d5; color: #276749; }
+    .badge-high    { background: #fed7d7; color: #c53030; }
+    .badge-unknown { background: #edf2f7; color: #718096; }
+    .hazard-detail { font-size: 0.78rem; color: #718096; }
+
+    /* ===== Prices card ===== */
+    .price-summary {
+      display: flex;
+      gap: 0.75rem;
+      margin-bottom: 1rem;
+    }
+    .price-stat {
+      flex: 1;
+      background: #f0fff4;
+      border-radius: 8px;
+      padding: 0.65rem 0.75rem;
+      text-align: center;
+    }
+    .price-stat .val { font-size: 1.4rem; font-weight: 700; color: #276749; }
+    .price-stat .lbl { font-size: 0.72rem; color: #718096; margin-top: 0.15rem; }
+
+    .trade-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.8rem;
+    }
+    .trade-table th {
+      background: #f7fafc;
+      padding: 0.45rem 0.5rem;
+      text-align: left;
+      font-weight: 600;
+      color: #4a5568;
+      border-bottom: 2px solid #e2e8f0;
+    }
+    .trade-table td {
+      padding: 0.45rem 0.5rem;
+      border-bottom: 1px solid #f0f0f0;
+      vertical-align: top;
+    }
+    .trade-table tr:last-child td { border-bottom: none; }
+    .price-val { font-weight: 600; color: #276749; }
+
+    /* ===== Placeholder (no data) ===== */
+    .placeholder {
+      color: #a0aec0;
+      font-size: 0.88rem;
+      text-align: center;
+      padding: 1.25rem;
+    }
+
+    /* ===== Footer ===== */
+    footer {
+      text-align: center;
+      padding: 1.25rem 1rem;
+      font-size: 0.8rem;
+      color: #a0aec0;
+      border-top: 1px solid #e2e8f0;
+      background: white;
+    }
+    footer a { color: #718096; text-decoration: none; }
+    footer a:hover { text-decoration: underline; }
+
+    @media (max-width: 600px) {
+      header { padding: 0.75rem 1rem; }
+      .search-wrap { padding: 1rem; }
+      .cards-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <span class="logo">🏠</span>
+  <h1>不動産調査ツール</h1>
+  <span class="badge">β版</span>
+</header>
+
+<div class="search-wrap">
+  <form class="search-form" id="search-form">
+    <input
+      type="text"
+      id="address-input"
+      class="search-input"
+      placeholder="住所を入力（例: 三重県いなべ市、東京都千代田区丸の内）"
+      autocomplete="off"
+    />
+    <button type="submit" class="search-btn" id="search-btn">調査する</button>
+  </form>
+</div>
+
+<div id="map-wrap">
+  <div id="map"></div>
+</div>
+
+<main id="main-content"></main>
+
+<footer>
+  データ出典:
+  <a href="https://www.reinfolib.mlit.go.jp/" target="_blank" rel="noopener">国土交通省 不動産情報ライブラリ</a>
+  &nbsp;/&nbsp;
+  <a href="https://www.gsi.go.jp/" target="_blank" rel="noopener">国土地理院</a>
+  &nbsp;/&nbsp;
+  <a href="https://www.land.mlit.go.jp/webland/" target="_blank" rel="noopener">国土交通省 土地総合情報システム</a>
+</footer>
+
+<script>
+  let leafletMap = null;
+  let mapMarker = null;
+
+  // ── Map ──────────────────────────────────────────────────────────────────
+  function showMap(lat, lon, label) {
+    const wrap = document.getElementById('map-wrap');
+    wrap.style.display = 'block';
+    if (!leafletMap) {
+      leafletMap = L.map('map').setView([lat, lon], 15);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+        maxZoom: 19,
+      }).addTo(leafletMap);
+    } else {
+      leafletMap.setView([lat, lon], 15);
+    }
+    if (mapMarker) mapMarker.remove();
+    mapMarker = L.marker([lat, lon])
+      .addTo(leafletMap)
+      .bindPopup(`<b>${escHtml(label)}</b><br><small>${lat.toFixed(6)}, ${lon.toFixed(6)}</small>`)
+      .openPopup();
+  }
+
+  // ── Utils ─────────────────────────────────────────────────────────────────
+  function escHtml(s) {
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function fmtPrice(val) {
+    if (!val) return '-';
+    const n = parseInt(val, 10);
+    if (isNaN(n)) return '-';
+    if (n >= 100_000_000) return `${(n / 100_000_000).toFixed(1)}億円`;
+    if (n >= 10_000)      return `${Math.round(n / 10_000)}万円`;
+    return `${n.toLocaleString()}円`;
+  }
+
+  // ── Render helpers ────────────────────────────────────────────────────────
+  function renderZoning(z) {
+    if (!z.available) {
+      if (z.reason === 'no_key') {
+        return `<div class="no-key-msg-inner placeholder">
+          APIキー未設定のため取得できません
+        </div>`;
+      }
+      return `<p class="placeholder">データを取得できませんでした</p>`;
+    }
+    if (!z.zones || z.zones.length === 0) {
+      return `<p class="placeholder">${escHtml(z.message || '用途地域の指定なし')}</p>`;
+    }
+    return z.zones.map(zone => `
+      <div class="zone-item">
+        <div class="zone-name">🏗️ ${escHtml(zone.name)}</div>
+        <div class="zone-meta">
+          <div class="meta-item">
+            <label>建蔽率</label>
+            <span>${escHtml(zone.coverage)}</span>
+          </div>
+          <div class="meta-item">
+            <label>容積率</label>
+            <span>${escHtml(zone.floor_ratio)}</span>
+          </div>
+          ${zone.city ? `<div class="meta-item"><label>市区町村</label><span>${escHtml(zone.city)}</span></div>` : ''}
+        </div>
+      </div>
+    `).join('');
+  }
+
+  function renderHazardRow(icon, label, info) {
+    if (!info.available) {
+      const msg = info.reason === 'no_key' ? '要APIキー' : '取得失敗';
+      return `<div class="hazard-row unknown">
+        <span class="hazard-icon">${icon}</span>
+        <span class="hazard-name">${label}</span>
+        <span class="hazard-badge badge-unknown">${msg}</span>
+      </div>`;
+    }
+    const isHigh = info.risk === 'high';
+    const cls = isHigh ? 'high' : 'low';
+    const badgeCls = isHigh ? 'badge-high' : 'badge-low';
+    return `<div class="hazard-row ${cls}">
+      <span class="hazard-icon">${icon}</span>
+      <span class="hazard-name">${label}</span>
+      <span class="hazard-badge ${badgeCls}">${escHtml(info.label)}</span>
+      ${info.detail ? `<span class="hazard-detail">${escHtml(info.detail)}</span>` : ''}
+    </div>`;
+  }
+
+  function renderHazard(h) {
+    return `<div class="hazard-list">
+      ${renderHazardRow('🌊', '洪水',    h.flood)}
+      ${renderHazardRow('🌀', '津波',    h.tsunami)}
+      ${renderHazardRow('⛰️', '土砂災害', h.landslide)}
+    </div>`;
+  }
+
+  function renderPrices(p) {
+    if (!p.available) return `<p class="placeholder">データを取得できませんでした</p>`;
+    if (p.count === 0) {
+      return `<p class="placeholder">この地域の直近取引データがありません</p>`;
+    }
+    const summary = `
+      <div class="price-summary">
+        <div class="price-stat">
+          <div class="val">${p.count}</div>
+          <div class="lbl">直近取引件数</div>
+        </div>
+      </div>`;
+    const rows = p.samples.map(s => `
+      <tr>
+        <td>${escHtml(s.district || '-')}</td>
+        <td>${escHtml(s.type || '-')}</td>
+        <td>${escHtml(s.area ? s.area + '㎡' : '-')}</td>
+        <td class="price-val">${fmtPrice(s.price)}</td>
+        <td>${escHtml(s.period || '-')}</td>
+      </tr>
+    `).join('');
+    return `${summary}
+      <table class="trade-table">
+        <thead>
+          <tr>
+            <th>地区</th>
+            <th>種類</th>
+            <th>面積</th>
+            <th>取引価格</th>
+            <th>時期</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+  }
+
+  function renderResults(data) {
+    const main = document.getElementById('main-content');
+
+    const noKeyNotice = !data.has_api_key ? `
+      <div class="no-key-notice">
+        ℹ️ <strong>MLIT_API_KEY</strong> が未設定です。用途地域・ハザード情報を表示するには、
+        <a href="https://www.reinfolib.mlit.go.jp/" target="_blank" rel="noopener">不動産情報ライブラリ</a>
+        で無料登録してAPIキーを取得し、環境変数 <code>MLIT_API_KEY=xxxxx</code> を設定してください。
+        取引価格は現在も表示されています。
+      </div>` : '';
+
+    const reinfolibUrl = `https://www.reinfolib.mlit.go.jp/map?x=${data.lat}&y=${data.lon}&zoom=16`;
+
+    main.innerHTML = `
+      <div class="location-bar">
+        <span>📍 <strong>${escHtml(data.address)}</strong>
+          <span class="coords">（緯度: ${data.lat.toFixed(5)}, 経度: ${data.lon.toFixed(5)}）</span>
+        </span>
+        <a href="${reinfolibUrl}" target="_blank" rel="noopener">不動産情報ライブラリで確認 ↗</a>
+      </div>
+      ${noKeyNotice}
+      <div class="cards-grid">
+        <div class="card">
+          <div class="card-head zoning">
+            <span class="icon">🏙️</span>
+            <h2>用途地域</h2>
+          </div>
+          <div class="card-body">${renderZoning(data.zoning)}</div>
+        </div>
+        <div class="card">
+          <div class="card-head hazard">
+            <span class="icon">⚠️</span>
+            <h2>ハザードリスク</h2>
+          </div>
+          <div class="card-body">${renderHazard(data.hazard)}</div>
+        </div>
+        <div class="card">
+          <div class="card-head prices">
+            <span class="icon">💴</span>
+            <h2>周辺取引価格</h2>
+          </div>
+          <div class="card-body">${renderPrices(data.prices)}</div>
+        </div>
+      </div>`;
+  }
+
+  // ── Search handler ────────────────────────────────────────────────────────
+  document.getElementById('search-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const address = document.getElementById('address-input').value.trim();
+    if (!address) return;
+
+    const btn = document.getElementById('search-btn');
+    btn.disabled = true;
+    btn.textContent = '検索中…';
+
+    const main = document.getElementById('main-content');
+    main.innerHTML = `
+      <div class="loading">
+        <div class="spinner"></div>
+        <p>データを取得中です…</p>
+      </div>`;
+
+    try {
+      const resp = await fetch(`/api/search?address=${encodeURIComponent(address)}`);
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({ detail: 'エラーが発生しました' }));
+        throw new Error(err.detail || 'エラーが発生しました');
+      }
+      const data = await resp.json();
+      renderResults(data);
+      showMap(data.lat, data.lon, data.address);
+    } catch (err) {
+      main.innerHTML = `<div class="error-banner">❌ ${escHtml(err.message)}</div>`;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '調査する';
+    }
+  });
+</script>
+</body>
+</html>
