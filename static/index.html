@@ -269,6 +269,31 @@
     .trade-table tr:last-child td { border-bottom: none; }
     .price-val { font-weight: 600; color: #276749; }
 
+    /* ===== Land price ===== */
+    .section-label {
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: #718096;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin: 0.75rem 0 0.4rem;
+    }
+    .lp-list { display: flex; flex-direction: column; gap: 0.4rem; margin-bottom: 0.25rem; }
+    .lp-row {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem 0.75rem;
+      background: #f0fff4;
+      border-radius: 6px;
+      font-size: 0.82rem;
+      flex-wrap: wrap;
+    }
+    .lp-use  { font-weight: 600; color: #276749; min-width: 60px; }
+    .lp-price { font-weight: 700; color: #2d3748; }
+    .lp-change { font-weight: 700; font-size: 0.85rem; }
+    .lp-station { color: #718096; font-size: 0.78rem; }
+
     /* ===== Placeholder (no data) ===== */
     .placeholder {
       color: #a0aec0;
@@ -435,16 +460,39 @@
 
   function renderPrices(p) {
     if (!p.available) return `<p class="placeholder">データを取得できませんでした</p>`;
-    if (p.count === 0) {
-      return `<p class="placeholder">この地域の直近取引データがありません</p>`;
+
+    let html = '';
+
+    // ── 地価公示セクション ──
+    if (p.land_prices && p.land_prices.length > 0) {
+      const lpRows = p.land_prices.map(lp => {
+        const change = parseFloat(lp.change);
+        const changeColor = change > 0 ? '#276749' : change < 0 ? '#c53030' : '#718096';
+        const changeSign = change > 0 ? '▲' : change < 0 ? '▼' : '';
+        return `<div class="lp-row">
+          <div class="lp-use">${escHtml(lp.use || '-')}</div>
+          <div class="lp-price">${escHtml(lp.price || '-')}</div>
+          <div class="lp-change" style="color:${changeColor}">${changeSign}${escHtml(lp.change || '-')}%</div>
+          ${lp.station ? `<div class="lp-station">🚉 ${escHtml(lp.station)}</div>` : ''}
+        </div>`;
+      }).join('');
+      html += `<div class="section-label">地価公示・地価調査（前年比）</div>
+        <div class="lp-list">${lpRows}</div>`;
     }
-    const summary = `
-      <div class="price-summary">
-        <div class="price-stat">
-          <div class="val">${p.count}</div>
-          <div class="lbl">直近取引件数</div>
-        </div>
-      </div>`;
+
+    // ── 取引価格セクション ──
+    if (p.count === 0) {
+      html += `<p class="placeholder" style="margin-top:${html ? '0.75rem' : '0'}">この地域の直近取引データがありません</p>`;
+      return html || `<p class="placeholder">データがありません</p>`;
+    }
+
+    const summary = `<div class="price-summary" style="margin-top:${html ? '0.75rem' : '0'}">
+      <div class="price-stat">
+        <div class="val">${p.count}</div>
+        <div class="lbl">直近取引件数</div>
+      </div>
+    </div>`;
+
     const rows = p.samples.map(s => `
       <tr>
         <td>${escHtml(s.district || '-')}</td>
@@ -454,19 +502,16 @@
         <td>${escHtml(s.period || '-')}</td>
       </tr>
     `).join('');
-    return `${summary}
+
+    html += `${summary}
+      <div class="section-label">取引価格事例</div>
       <table class="trade-table">
         <thead>
-          <tr>
-            <th>地区</th>
-            <th>種類</th>
-            <th>面積</th>
-            <th>取引価格</th>
-            <th>時期</th>
-          </tr>
+          <tr><th>地区</th><th>種類</th><th>面積</th><th>取引価格</th><th>時期</th></tr>
         </thead>
         <tbody>${rows}</tbody>
       </table>`;
+    return html;
   }
 
   function renderResults(data) {

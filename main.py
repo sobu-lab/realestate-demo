@@ -96,24 +96,66 @@ async def get_reinfolib(endpoint: str, lat: float, lon: float) -> dict | None:
 
 
 # ---------------------------------------------------------------------------
-# 不動産取引価格API（無料・キー不要）
+# 不動産取引価格・地価公示 API（reinfolib XIT001 / XPT002）
 # ---------------------------------------------------------------------------
 
-async def get_trade_prices(pref_code: str, city_code: str) -> list:
-    """国土交通省 土地総合情報システム 取引価格API（キー不要）"""
-    year = datetime.now().year
-    url = "https://www.land.mlit.go.jp/webland/api/TradeListSearch"
-    params = {
-        "from": f"{year - 2}1",
-        "to": f"{year}4",
-        "area": pref_code,
-        "city": city_code,
-    }
+def _recent_quarters(n: int = 4) -> list[tuple[int, int]]:
+    """直近 n 四半期の (year, quarter) リストを返す"""
+    now = datetime.now()
+    year, month = now.year, now.month
+    cur_q = (month - 1) // 3 + 1
+    quarters = []
+    for i in range(1, n + 1):
+        q = cur_q - i
+        y = year
+        while q <= 0:
+            q += 4
+            y -= 1
+        quarters.append((y, q))
+    return quarters
+
+
+async def _fetch_xit001(pref_code: str, city_code: str, year: int, quarter: int) -> list:
+    """XIT001 1四半期分の取引価格取得"""
+    params = {"year": year, "quarter": quarter, "area": pref_code, "city": city_code}
+    headers = {"Ocp-Apim-Subscription-Key": MLIT_API_KEY}
     async with httpx.AsyncClient(timeout=15.0) as client:
         try:
-            resp = await client.get(url, params=params)
+            resp = await client.get(f"{REINFOLIB_BASE}/XIT001/", params=params, headers=headers)
             if resp.status_code == 200:
-                return resp.json().get("data", [])[:20]
+                return resp.json().get("data", [])
+        except Exception:
+            pass
+    return []
+
+
+async def get_trade_prices(pref_code: str, city_code: str) -> list:
+    """取引価格取得 - XIT001（直近4四半期を並行取得）"""
+    if not MLIT_API_KEY:
+        return []
+    quarters = _recent_quarters(4)
+    results_list = await asyncio.gather(*[
+        _fetch_xit001(pref_code, city_code, y, q) for y, q in quarters
+    ])
+    all_data: list = []
+    for r in results_list:
+        all_data.extend(r)
+    return all_data[:20]
+
+
+async def get_land_prices(lat: float, lon: float) -> list:
+    """地価公示・地価調査取得 - XPT002（タイル座標方式）"""
+    if not MLIT_API_KEY:
+        return []
+    x, y = latlon_to_tile(lat, lon, REINFOLIB_ZOOM)
+    year = datetime.now().year - 1  # 直近公示年（前年）
+    params = {"response_format": "geojson", "z": REINFOLIB_ZOOM, "x": x, "y": y, "year": year}
+    headers = {"Ocp-Apim-Subscription-Key": MLIT_API_KEY}
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        try:
+            resp = await client.get(f"{REINFOLIB_BASE}/XPT002/", params=params, headers=headers)
+            if resp.status_code == 200:
+                return resp.json().get("features", [])
         except Exception:
             pass
     return []
@@ -176,10 +218,8 @@ def parse_hazard(flood: dict | None, tsunami: dict | None, landslide: dict | Non
     }
 
 
-def parse_prices(trades: list) -> dict:
-    """取引価格データの解析"""
-    if not trades:
-        return {"available": True, "count": 0, "samples": []}
+def parse_prices(trades: list, land_price_features: list) -> dict:
+    """取引価格・地価公示データの解析"""
     samples = []
     for t in trades[:8]:
         price = t.get("TradePrice", "")
@@ -192,9 +232,25 @@ def parse_prices(trades: list) -> dict:
             "unit_price": t.get("UnitPrice", ""),
             "period": t.get("Period", ""),
             "district": t.get("DistrictName", ""),
-            "city_planning": t.get("CityPlanning", ""),
         })
-    return {"available": True, "count": len(trades), "samples": samples}
+
+    # 地価公示サマリー（近傍ポイントの平均変動率と代表価格）
+    land_prices = []
+    for f in land_price_features[:5]:
+        p = f.get("properties", {})
+        land_prices.append({
+            "price": p.get("u_current_years_price_ja", ""),
+            "use": p.get("use_category_name_ja", ""),
+            "change": p.get("year_on_year_change_rate", ""),
+            "station": p.get("nearest_station_name_ja", ""),
+        })
+
+    return {
+        "available": True,
+        "count": len(trades),
+        "samples": samples,
+        "land_prices": land_prices,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -213,18 +269,19 @@ async def search(address: str):
     # 2. 市区町村コード取得
     city_info = await get_city_info(lat, lon)
 
-    # 3. 不動産情報ライブラリ（用途地域・ハザード）を並行取得
-    zoning_raw, flood_raw, tsunami_raw, landslide_raw = await asyncio.gather(
+    # 3. 不動産情報ライブラリ（用途地域・ハザード・地価）を並行取得
+    zoning_raw, flood_raw, tsunami_raw, landslide_raw, land_price_raw = await asyncio.gather(
         get_reinfolib("XKT002", lat, lon),  # 用途地域
         get_reinfolib("XKT026", lat, lon),  # 洪水浸水想定区域（想定最大規模）
         get_reinfolib("XKT028", lat, lon),  # 津波浸水想定
         get_reinfolib("XKT029", lat, lon),  # 土砂災害警戒区域
+        get_land_prices(lat, lon),          # 地価公示・地価調査（XPT002）
     )
 
-    # 4. 取引価格（キー不要の無料API）
-    prices_raw = []
+    # 4. 取引価格（XIT001: year+quarter+area 方式）
+    trades_raw = []
     if city_info.get("pref_code") and city_info.get("muniCd"):
-        prices_raw = await get_trade_prices(city_info["pref_code"], city_info["muniCd"])
+        trades_raw = await get_trade_prices(city_info["pref_code"], city_info["muniCd"])
 
     return {
         "address": address,
@@ -234,7 +291,7 @@ async def search(address: str):
         "has_api_key": bool(MLIT_API_KEY),
         "zoning": parse_zoning(zoning_raw),
         "hazard": parse_hazard(flood_raw, tsunami_raw, landslide_raw),
-        "prices": parse_prices(prices_raw),
+        "prices": parse_prices(trades_raw, land_price_raw if isinstance(land_price_raw, list) else []),
     }
 
 
