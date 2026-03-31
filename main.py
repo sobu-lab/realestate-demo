@@ -1,3 +1,4 @@
+import math
 import os
 import asyncio
 from datetime import datetime
@@ -10,6 +11,7 @@ app = FastAPI(title="不動産調査ツール")
 
 MLIT_API_KEY = os.getenv("MLIT_API_KEY", "")
 REINFOLIB_BASE = "https://www.reinfolib.mlit.go.jp/ex-api/external"
+REINFOLIB_ZOOM = 15  # タイルズームレベル（15が有効）
 
 # 洪水浸水深コード変換
 FLOOD_DEPTH_MAP = {
@@ -28,6 +30,15 @@ LANDSLIDE_TYPE_MAP = {
     "2": "急傾斜地崩壊",
     "3": "地すべり",
 }
+
+
+def latlon_to_tile(lat: float, lon: float, z: int) -> tuple[int, int]:
+    """緯度経度をタイル座標（x, y）に変換"""
+    n = 2 ** z
+    x = int((lon + 180.0) / 360.0 * n)
+    lat_rad = math.radians(lat)
+    y = int((1.0 - math.log(math.tan(lat_rad) + 1.0 / math.cos(lat_rad)) / math.pi) / 2.0 * n)
+    return x, y
 
 
 # ---------------------------------------------------------------------------
@@ -67,12 +78,13 @@ async def get_city_info(lat: float, lon: float) -> dict:
 # ---------------------------------------------------------------------------
 
 async def get_reinfolib(endpoint: str, lat: float, lon: float) -> dict | None:
-    """不動産情報ライブラリAPIからGeoJSONデータ取得"""
+    """不動産情報ライブラリAPIからGeoJSONデータ取得（タイル座標方式）"""
     if not MLIT_API_KEY:
         return None  # キー未設定 → Noneを返す
+    x, y = latlon_to_tile(lat, lon, REINFOLIB_ZOOM)
     url = f"{REINFOLIB_BASE}/{endpoint}/"
-    params = {"response_format": "geojson", "lat": lat, "lon": lon}
-    headers = {"X-API-Key": MLIT_API_KEY}
+    params = {"response_format": "geojson", "z": REINFOLIB_ZOOM, "x": x, "y": y}
+    headers = {"Ocp-Apim-Subscription-Key": MLIT_API_KEY}
     async with httpx.AsyncClient(timeout=15.0) as client:
         try:
             resp = await client.get(url, params=params, headers=headers)
@@ -203,10 +215,10 @@ async def search(address: str):
 
     # 3. 不動産情報ライブラリ（用途地域・ハザード）を並行取得
     zoning_raw, flood_raw, tsunami_raw, landslide_raw = await asyncio.gather(
-        get_reinfolib("XKT010", lat, lon),  # 用途地域
-        get_reinfolib("XKT007", lat, lon),  # 洪水浸水想定区域
-        get_reinfolib("XKT011", lat, lon),  # 津波浸水想定
-        get_reinfolib("XKT012", lat, lon),  # 土砂災害警戒区域
+        get_reinfolib("XKT002", lat, lon),  # 用途地域
+        get_reinfolib("XKT026", lat, lon),  # 洪水浸水想定区域（想定最大規模）
+        get_reinfolib("XKT028", lat, lon),  # 津波浸水想定
+        get_reinfolib("XKT029", lat, lon),  # 土砂災害警戒区域
     )
 
     # 4. 取引価格（キー不要の無料API）
