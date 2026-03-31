@@ -265,7 +265,7 @@ def parse_prices(trades: list, land_price_features: list) -> dict:
 
     # 地価公示サマリー（近傍ポイントの平均変動率と代表価格）
     land_prices = []
-    for f in land_price_features[:5]:
+    for f in land_price_features:
         p = f.get("properties", {})
         land_prices.append({
             "price": p.get("u_current_years_price_ja", ""),
