@@ -143,26 +143,51 @@ async def get_trade_prices(pref_code: str, city_code: str) -> list:
     return all_data[:20]
 
 
+async def _fetch_xpt002_tile(client: httpx.AsyncClient, z: int, x: int, y: int, year: int, headers: dict) -> list:
+    """XPT002 単タイル取得"""
+    params = {"response_format": "geojson", "z": z, "x": x, "y": y, "year": year}
+    try:
+        resp = await client.get(f"{REINFOLIB_BASE}/XPT002/", params=params, headers=headers)
+        if resp.status_code == 200:
+            return resp.json().get("features", [])
+    except Exception:
+        pass
+    return []
+
+
 async def get_land_prices(lat: float, lon: float) -> list:
-    """地価公示・地価調査取得 - XPT002（タイル座標方式）
-    z=15 で取得し、結果が空なら z=14 → z=13 と段階的に広域検索。"""
+    """地価公示・地価調査取得 - XPT002
+    z=15 単タイル → なければ z=13 で 3×3 グリッド並行検索（タイル境界またぎ対策）。
+    """
     if not MLIT_API_KEY:
         return []
-    year = datetime.now().year - 1  # 直近公示年（前年）
+    year = datetime.now().year - 1
     headers = {"Ocp-Apim-Subscription-Key": MLIT_API_KEY}
+
     async with httpx.AsyncClient(timeout=15.0) as client:
-        for z in (15, 14, 13):
-            x, y = latlon_to_tile(lat, lon, z)
-            params = {"response_format": "geojson", "z": z, "x": x, "y": y, "year": year}
-            try:
-                resp = await client.get(f"{REINFOLIB_BASE}/XPT002/", params=params, headers=headers)
-                if resp.status_code == 200:
-                    features = resp.json().get("features", [])
-                    if features:
-                        return features
-            except Exception:
-                pass
-    return []
+        # z=15 単タイル（都市部は十分）
+        cx, cy = latlon_to_tile(lat, lon, 15)
+        features = await _fetch_xpt002_tile(client, 15, cx, cy, year, headers)
+        if features:
+            return features
+
+        # z=13 で 3×3 グリッド並行検索（地方・境界またぎ対策）
+        cx, cy = latlon_to_tile(lat, lon, 13)
+        tasks = [
+            _fetch_xpt002_tile(client, 13, cx + dx, cy + dy, year, headers)
+            for dx in (-1, 0, 1)
+            for dy in (-1, 0, 1)
+        ]
+        results = await asyncio.gather(*tasks)
+        seen: set = set()
+        merged: list = []
+        for tile_features in results:
+            for f in tile_features:
+                fid = f.get("properties", {}).get("_id") or str(f)
+                if fid not in seen:
+                    seen.add(fid)
+                    merged.append(f)
+        return merged
 
 
 # ---------------------------------------------------------------------------
